@@ -94,26 +94,25 @@ def create_modules(blocks):
             module.add_module("upsample_{}".format(idx), upsample)
 
         elif each_block['type'] == 'route':
-            layers = each_block['layers'].split(',')
-            start = int(layers[0])
-            try:
-                end = int(layers[1])
-            except:
-                end = 0
-
-            if start > 0:
-                start = start - idx 
-            if end > 0:
-                end = end - idx     # a trick to let end negative, to keep end + idx correct
+            layers = list(map(lambda x: int(x), each_block['layers'].split(',')))
+            if layers[0] > 0:
+                layers[0] -= idx  # a trick to let index negative, to keep index + idx correct
             
+            if len(layers) == 1:
+                end = 0
+            else:
+                if layers[1] > 0:
+                    layers[1] -= idx
+                end = layers[1]
+ 
             route =  EmptyLayer()
             module.add_module("route_{0}".format(idx), route)
 
             if end < 0:
                 end = output_filters[end + idx]
-            filters = output_filters[start + idx] + end
+            filters = output_filters[layers[0] + idx] + end
 
-        elif each_block['type'] == 'shortcut':
+        elif each_block['type'] == 'shortcut': # won't change the number of filters
             shortcut = EmptyLayer()
             module.add_module("shortcut_{}".format(idx), shortcut)
 
@@ -143,3 +142,29 @@ class Darknet(nn.Module):
         super(Darknet, self).__init__()
         self.blocks = parse_cfg(cfg_file)
         self.net_info, self.module_list = create_modules(self.blocks)
+
+    def forward(self, x):
+        blocks = self.blocks[1:]
+        outputs = {}
+
+        for idx, block in enumerate(blocks):
+            if block['type'] == 'convolutional' or block['type'] == 'upsample':
+                x = self.module_list[idx](x)
+            
+            elif block['type'] == 'route':
+                layers = list(map(lambda x: int(x), block['layers'].split(',')))
+                
+                if layers[0] > 0:
+                    layers[0] -= idx
+                if len(layers) == 1: # len must be equal to 1 or 2
+                    x = outputs[layers[0] + idx]
+                else:
+                    if layers[1] > 0:
+                        layers[1] -= idx
+                    featuremap1 = outputs[layers[0] + idx]
+                    featuremap2 = outputs[layers[1] + idx]
+
+                    x = torch.cat((featuremap1, featuremap2), 1)
+            
+            elif block['type'] == 'shortcut':
+                x += outputs[int(block['from']) + idx]

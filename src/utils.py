@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 import cv2 
 
-def transform_predict(pred, img_size, anchors, num_classes):
+def transform_predict(pred, img_size, anchors, num_classes, device=None):
     '''
     Takes the prediction featuremap and some params
 
@@ -35,3 +35,42 @@ def transform_predict(pred, img_size, anchors, num_classes):
     pred[:,:0] = pred[:,:0].sigmoid() # tx
     pred[:,:1] = pred[:,:1].sigmoid() # ty
     pred[:,:4] = pred[:,:4].sigmoid() # ob
+
+    grid = np.arange(grid_size)
+    x, y = np.meshgrid(grid, grid)
+    x_offset = torch.FloatTensor(x).reshape(-1,1) # g x 1
+    y_offset = torch.FloatTensor(y).reshape(-1,1) # g x 1
+
+    if device: # use GPU
+        x_offset = x_offset.to(device)
+        y_offset = y_offset.to(device)
+    
+    # concat -> g, 2
+    x_y_offset = torch.cat((x_offset, y_offset), 1) 
+    # g, 2 -> g, 2xB
+    x_y_offset = x_y_offset.repeat(1, num_anchors)
+    # g, 2xB -> gxB, 2
+    x_y_offset = x_y_offset.reshape(-1, 2)
+    # gxB, 2 -> 1, gxB, 2
+    x_y_offset = x_y_offset.unsqueeze(0)
+
+    pred[:,:,:2] += x_y_offset # add offset to tx, ty
+
+    anchors = torch.FloatTensor(anchors)
+    if device:
+        anchors = anchors.to(device)
+    
+    # init anchors for every grid unit
+    # 1 x B -> HW, B
+    anchors = anchors.repeat(grid_size*grid_size, 1)
+    # HW, B -> 1, HW, B
+    anchors = anchors.unsqueeze(0)
+    # th = exp(th) * anchor_th (tw too)
+    pred[:,:,2:4] = torch.exp(pred[:,:,2:4])*anchors
+
+    # p(c) = sigmoid(c)
+    pred[:,:,5:5+num_classes] = pred[:,:,5:5+num_classes].sigmoid()
+
+    pred[:,:,:4] *= scale # bbox in origial img
+
+    return pred

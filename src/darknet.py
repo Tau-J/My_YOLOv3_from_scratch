@@ -148,6 +148,7 @@ class Darknet(nn.Module):
         blocks = self.blocks[1:]
         outputs = {}
 
+        cnt_dets = 0
         for idx, block in enumerate(blocks):
             if block['type'] == 'convolutional' or block['type'] == 'upsample':
                 x = self.module_list[idx](x)
@@ -169,3 +170,20 @@ class Darknet(nn.Module):
             
             elif block['type'] == 'shortcut':
                 x += outputs[int(block['from']) + idx]
+
+            elif block['type'] == 'yolo':
+                anchors =  self.module_list[idx][0].anchors
+                img_size = int(self.net_info['height'])
+                num_classes = int(block['classes'])
+                x = transform_predict(x, img_size, anchors, num_classes)
+
+                if cnt_dets == 0:
+                    dets = x
+                else:
+                    dets = torch.cat((dets, x), 1)
+                cnt_dets += 1
+
+            outputs[idx] = x
+        return dets    
+            
+

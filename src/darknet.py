@@ -185,5 +185,26 @@ class Darknet(nn.Module):
 
             outputs[idx] = x
         return dets    
-            
+    
+    def load_weights(self, weights_file):            
+        with open(weights_file, 'rb') as f:
+            header = np.fromfile(f, dtype=np.int32, count=5)
+            self.header = torch.from_numpy(header)
+            self.seen = self.header[3]
+            weights = np.fromfile(f, dtype = np.float32)
+        
+        ptr = 0
+        for idx, block in enumerate(self.blocks[1:]):
+            if block['type'] == 'convolutional':
+                model = self.module_list[idx+1]
+                try:
+                    batch_normalize = int(block['batch_normalize'])
+                except:
+                    batch_normalize = 0
+                conv = model[0]
 
+                if batch_normalize:
+                    # get the number of elements of an array
+                    num_bn_bias = bn.bias.numel() 
+
+                    

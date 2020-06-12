@@ -204,7 +204,53 @@ class Darknet(nn.Module):
                 conv = model[0]
 
                 if batch_normalize:
+                    bn = model[1]
+
                     # get the number of elements of an array
                     num_bn_bias = bn.bias.numel() 
 
+                    # load bn weights
+                    bn_biases = torch.from_numpy(weights[ptr:ptr+num_bn_bias])
+                    ptr += num_bn_bias
+
+                    bn_weights = torch.from_numpy(weights[ptr:ptr+num_bn_bias])
+                    ptr += num_bn_bias
+
+                    bn_running_mean = torch.from_numpy(weights[ptr:ptr+num_bn_bias])
+                    ptr += num_bn_bias
+
+                    bn_running_var = torch.from_numpy(weights[ptr:ptr+num_bn_bias])
+                    ptr += num_bn_bias
+
+                    bn_biases = bn_biases.view_as(bn.bias.data)
+                    bn_weights = bn_weights.view_as(bn.weight.data)
+                    bn_running_mean = bn_running_mean.view_as(bn.running_mean)
+                    bn_running_var = bn_running_var.view_as(bn.running_var)
+
+                    bn.bias.data.copy_(bn_biases)
+                    bn.weight.data.copy_(bn_weights)
+                    bn.running_mean.copy_(bn_running_mean)
+                    bn.running_var.copy_(bn_running_var)
+
+                else:
+                    num_bias = conv.bias.numel()
+
+                    # load conv weights
+                    conv_biases = torch.from_numpy(weights[ptr:ptr+num_bias])
+                    ptr += num_bias
+
+                    conv_biases = conv_biases.view_as(conv.bias.data)
                     
+                    conv.bias.data.copy_(conv_biases)
+
+                num_weights = conv.weight.numel()
+
+                conv_weights = torch.from_numpy(weights[ptr:ptr+num_weights])
+                ptr += num_weights
+
+                conv_weights = conv_weights.view_as(conv.weight.data)
+
+                conv.weight.data.copy_(conv_weights)
+            
+model = Darknet("src/cfg/yolov3.cfg")
+model.load_weights("/home/jiangtao/yolov3.weights")

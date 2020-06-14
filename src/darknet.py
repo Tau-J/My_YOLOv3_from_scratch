@@ -196,7 +196,7 @@ class Darknet(nn.Module):
         ptr = 0
         for idx, block in enumerate(self.blocks[1:]):
             if block['type'] == 'convolutional':
-                model = self.module_list[idx+1]
+                model = self.module_list[idx]
                 try:
                     batch_normalize = int(block['batch_normalize'])
                 except:

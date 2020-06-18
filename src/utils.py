@@ -89,26 +89,29 @@ def nms(bboxes, conf_score, thresh):
         bbox_y2 = bboxes[:,3]
 
         areas = (bbox_x2 - bbox_x1 + 1) * (bbox_y2 - bbox_y1 + 1)
-        order = torch.argmax(conf_score)
+        order = torch.argsort(conf_score, descending=True)
 
-        while order.size > 0:
-            idx_max_score = order[0]
+        while order.numel() > 0:
+            if order.numel() == 1:
+                idx_max_score = order.item()
+            else:
+                idx_max_score = order[0].item()
             
             # append the bbox with max score into result list
             res_bboxes_idx.append(idx_max_score)
 
-            if len(order) == 1:
+            if order.numel() == 1:
                 break
             
             # calc iou
-            x1, _ = bbox_x1[order[1:]].clamp(min=bbox_x1[idx_max_score])
-            x2, _ = bbox_x2[order[1:]].clamp(max=bbox_x2[idx_max_score])
-            y1, _ = bbox_y1[order[1:]].clamp(min=bbox_y1[idx_max_score])
-            y2, _ = bbox_y2[order[1:]].clamp(max=bbox_y2[idx_max_score])
+            x1 = bbox_x1[order[1:]].clamp(min=bbox_x1[idx_max_score].item())
+            x2 = bbox_x2[order[1:]].clamp(max=bbox_x2[idx_max_score].item())
+            y1 = bbox_y1[order[1:]].clamp(min=bbox_y1[idx_max_score].item())
+            y2 = bbox_y2[order[1:]].clamp(max=bbox_y2[idx_max_score].item())
             inter = (x2-x1).clamp(min=1) * (y2-y1).clamp(min=1)
 
             iou = inter /  (areas[idx_max_score]+areas[order[1:]]-inter)
-            idx = (iou <= threshold).nonzero().squeeze()
+            idx = (iou <= thresh).nonzero().squeeze()
             if idx.numel() == 0 :
                 break
             order = order[idx+1]
@@ -119,9 +122,6 @@ def nms(bboxes, conf_score, thresh):
 def write_results(pred, confidence, num_classes, nms_thresh=0.4):
     conf_mask = (pred[:,:,4] > confidence).float().unsqueeze(2)
     pred = pred * conf_mask
-
-    non_zero_idx =  (torch.nonzero(pred[:,:,4])).unsqueeze(2)
-    pred = pred[non_zero_idx]
 
     bbox_corner = pred.new(pred.shape)
     bbox_corner[:,:,0] = pred[:,:,0] - pred[:,:,2]/2
@@ -134,27 +134,36 @@ def write_results(pred, confidence, num_classes, nms_thresh=0.4):
     write = False
     for idx in range(bs):
         each_img_pred = pred[idx] # BHW, 5+c
-        max_conf, arg_max_conf = torch.max(each_img_pred[:,5:5+num_classes], 1)
-        
-        # max_conf_score = max_conf_score.float().unsqueeze(1)
-        # arg_max_conf = arg_max_conf.float().unsqueeze(1)
-        each_img_pred = each_img_pred[:,arg_max_conf]
-        each_img_bboxes = each_img_pred[:,:4]
-        each_img_conf_score = each_img_pred[:,4]
-        each_img_idx = nms(each_img_bboxes, each_img_conf_score, nms_thresh)
-        each_img_pred = each_img_pred[:, each_img_idx]
-        max_conf = max_conf[each_img_idx].float().unsqueeze(1)
-        each_img_idx = each_img_idx.flaot().unsqueeze(1)
-        batch_idx = each_img_pred.new(each_img_pred.size(0), 1).fill_(idx)
-        seq = (batch_idx, each_img_pred[:,:5], max_conf, each_img_idx)
+        non_zero_idx = each_img_pred[:,4].nonzero().squeeze()
+        each_img_pred = each_img_pred[non_zero_idx,:]
 
-        if not write:
-            output = torch.cat(seq, 1)
-            write = True
-        else:
-            out = torch.cat(seq, 1)
-            output = torch.cat((output, out))
-    return output
+        max_conf, pred_class = torch.max(each_img_pred[:,5:5+num_classes], 1)
+        img_classes = pred_class.unique()
+
+        max_conf = max_conf.float().unsqueeze(1)
+        pred_class = pred_class.float().unsqueeze(1)
+        seq = (each_img_pred[:,:5], max_conf, pred_class)
+        each_img_pred = torch.cat(seq, 1)
+        
+        for cls in img_classes:
+            each_cls_pred = each_img_pred[each_img_pred[:,-1] == cls, :]
+            each_cls_pred_idx = nms(each_cls_pred[:,:4], each_cls_pred[:,4], nms_thresh)
+            
+            each_cls_pred = each_cls_pred[each_cls_pred_idx]
+            
+            batch_ind = each_cls_pred.new(each_cls_pred.size(0), 1).fill_(idx)
+            seq = (batch_ind, each_cls_pred)
+
+            if not write:
+                output = torch.cat(seq, 1)
+                write = True
+            else:
+                out = torch.cat(seq, 1)
+                output = torch.cat((output, out))
+    try:
+        return output
+    except:
+        return 0
 
 def padding_resize(img, size):
     img_w, img_h = img.shape[1], img.shape[0]

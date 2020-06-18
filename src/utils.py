@@ -73,4 +73,111 @@ def transform_predict(pred, img_size, anchors, num_classes, device=None):
 
     pred[:,:,:4] *= scale # bbox in origial img
 
-    return pred
+    return pred 
+
+def load_classes(names_file):
+    with open(names_file, 'r') as f:
+        names = f.read.split('\n')[:-1]
+    return names
+
+def nms(bboxes, conf_score, thresh):
+    res_bboxes_idx = []
+    if len(bboxes):
+        bbox_x1 = bboxes[:,0]
+        bbox_x2 = bboxes[:,1]
+        bbox_y1 = bboxes[:,2]
+        bbox_y2 = bboxes[:,3]
+
+        areas = (bbox_x2 - bbox_x1 + 1) * (bbox_y2 - bbox_y1 + 1)
+        order = torch.argmax(conf_score)
+
+        while order.size > 0:
+            idx_max_score = order[0]
+            
+            # append the bbox with max score into result list
+            res_bboxes_idx.append(idx_max_score)
+
+            if len(order) == 1:
+                break
+            
+            # calc iou
+            x1, _ = bbox_x1[order[1:]].clamp(min=bbox_x1[idx_max_score])
+            x2, _ = bbox_x2[order[1:]].clamp(max=bbox_x2[idx_max_score])
+            y1, _ = bbox_y1[order[1:]].clamp(min=bbox_y1[idx_max_score])
+            y2, _ = bbox_y2[order[1:]].clamp(max=bbox_y2[idx_max_score])
+            inter = (x2-x1).clamp(min=1) * (y2-y1).clamp(min=1)
+
+            iou = inter /  (areas[idx_max_score]+areas[order[1:]]-inter)
+            idx = (iou <= threshold).nonzero().squeeze()
+            if idx.numel() == 0 :
+                break
+            order = order[idx+1]
+
+    return torch.LongTensor(res_bboxes_idx)
+
+
+def write_results(pred, confidence, num_classes, nms_thresh=0.4):
+    conf_mask = (pred[:,:,4] > confidence).float().unsqueeze(2)
+    pred = pred * conf_mask
+
+    non_zero_idx =  (torch.nonzero(pred[:,:,4])).unsqueeze(2)
+    pred = pred[non_zero_idx]
+
+    bbox_corner = pred.new(pred.shape)
+    bbox_corner[:,:,0] = pred[:,:,0] - pred[:,:,2]/2
+    bbox_corner[:,:,1] = pred[:,:,1] - pred[:,:,3]/2
+    bbox_corner[:,:,3] = pred[:,:,0] + pred[:,:,2]/2
+    bbox_corner[:,:,3] = pred[:,:,1] + pred[:,:,3]/2
+    pred[:,:,:4] = bbox_corner[:,:,:4]
+
+    bs = pred.size(0)
+    write = False
+    for idx in range(bs):
+        each_img_pred = pred[idx] # BHW, 5+c
+        max_conf, arg_max_conf = torch.max(each_img_pred[:,5:5+num_classes], 1)
+        
+        # max_conf_score = max_conf_score.float().unsqueeze(1)
+        # arg_max_conf = arg_max_conf.float().unsqueeze(1)
+        each_img_pred = each_img_pred[:,arg_max_conf]
+        each_img_bboxes = each_img_pred[:,:4]
+        each_img_conf_score = each_img_pred[:,4]
+        each_img_idx = nms(each_img_bboxes, each_img_conf_score, nms_thresh)
+        each_img_pred = each_img_pred[:, each_img_idx]
+        max_conf = max_conf[each_img_idx].float().unsqueeze(1)
+        each_img_idx = each_img_idx.flaot().unsqueeze(1)
+        batch_idx = each_img_pred.new(each_img_pred.size(0), 1).fill_(idx)
+        seq = (batch_idx, each_img_pred[:,:5], max_conf, each_img_idx)
+
+        if not write:
+            output = torch.cat(seq, 1)
+            write = True
+        else:
+            out = torch.cat(seq, 1)
+            output = torch.cat((output, out))
+    return output
+
+def padding_resize(img, size):
+    img_w, img_h = img.shape[1], img.shape[0]
+    w, h = size
+    new_w = int(img_w * min(w/img_w, h/img_h))
+    new_h = int(img_h * min(w/img_w, h/img_h))
+    resized_image = cv2.resize(img, (new_w,new_h), interpolation = cv2.INTER_CUBIC)
+    
+    canvas = np.full((size[1], size[0], 3), 128)
+
+    canvas[(h-new_h)//2:(h-new_h)//2 + new_h,(w-new_w)//2:(w-new_w)//2 + new_w,  :] = resized_image
+    
+    return canvas
+
+def prep_image(img, size):
+    """
+    Prepare image for inputting to the neural network. 
+    
+    Returns a Variable 
+    """
+
+    img = cv2.resize(img, (size, size))
+    img = img[:,:,::-1].transpose((2,0,1)).copy()
+    img = torch.from_numpy(img).float().div(255.0).unsqueeze(0)
+    return img
+

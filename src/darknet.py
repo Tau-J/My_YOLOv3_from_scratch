@@ -252,5 +252,5 @@ class Darknet(nn.Module):
 
                 conv.weight.data.copy_(conv_weights)
             
-model = Darknet("cfg/yolov3.cfg")
-model.load_weights("/home/jiangtao/yolov3.weights")
+# model = Darknet("cfg/yolov3.cfg")
+# model.load_weights("/home/jiangtao/yolov3.weights")
